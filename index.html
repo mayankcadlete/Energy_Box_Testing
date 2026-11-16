@@ -106,17 +106,18 @@
       connectBtn.disabled = false;
     }
 
-    // Buttons - must match OUTPUT_PINS in the sketch
-    [2, 27].forEach(pin => {
+    // Buttons - must match LED_PIN / LOCK_PIN in main/main.c (ESP32-C3)
+    const LED_PIN = 8, LOCK_PIN = 4;
+    [LED_PIN, LOCK_PIN].forEach(pin => {
       const b = document.createElement('button');
       b.id = 'pin' + pin;
-      b.textContent = pin === 27 ? 'UNLOCK' : 'LED (GPIO2)';
+      b.textContent = pin === LOCK_PIN ? 'UNLOCK' : 'LED (GPIO' + LED_PIN + ')';
       b.disabled = true;
       b.addEventListener('click', async () => {
         if (!rxChar) return;
         try {
-          if (pin === 27) {                       // lock: always one short unlock pulse
-            await rxChar.writeValue(enc('27:1'));
+          if (pin === LOCK_PIN) {                 // lock: always one short unlock pulse
+            await rxChar.writeValue(enc(LOCK_PIN + ':1'));
             log('Me: unlock');
             return;
           }

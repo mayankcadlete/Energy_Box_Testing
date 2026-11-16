@@ -1,3 +1,6 @@
+# Target chip
+CONFIG_IDF_TARGET="esp32c3"
+
 # Bluetooth with the NimBLE host (lighter than Bluedroid)
 CONFIG_BT_ENABLED=y
 CONFIG_BT_NIMBLE_ENABLED=y

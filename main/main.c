@@ -1,12 +1,18 @@
 /*
   ESP-IDF (NimBLE) port of the Arduino lock controller
-  Board: ESP32 (NodeMCU-32S)
+  Board: ESP32-C3 (e.g. ESP32-C3 SuperMini / DevKitM-1)
 
-  - Advertises as "ESP32_<DEVICE_ID>"
-  - Nordic UART Service (same UUIDs as before, so index.html works unchanged)
+  - Advertises as "<DEVICE_ID>"
+  - Nordic UART Service (same UUIDs as before)
   - Phone must send  AUTH:<SECRET_KEY>  first, otherwise commands are refused
-  - GPIO2  = onboard LED   (command 2:1 / 2:0)
-  - GPIO27 = relay -> lock (command 27:1 = one short unlock pulse)
+  - GPIO8 = onboard LED   (command 8:1 / 8:0)
+  - GPIO4 = relay -> lock (command 4:1 = one short unlock pulse)
+
+  Pin choice on the ESP32-C3:
+    avoid GPIO2, 8, 9 for the relay (strapping pins - boot level / boot mode)
+    avoid GPIO12-17 (SPI flash), 18/19 (USB), 20/21 (UART0 console)
+    GPIO4 is a plain IO, idle/high-impedance at reset, so a low-level-trigger
+    relay module stays OFF while the chip boots or resets.
 
   DEVICE_ID and SECRET_KEY are set in device_config.json - use the SAME
   values in your QR code.
@@ -41,16 +47,28 @@
 
 #define DEVICE_NAME DEVICE_ID
 
-#define LED_PIN              2
-#define LOCK_PIN             27
-#define LOCK_PULSE_MS        400      // relay ON time per unlock (keep under 500 ms)
+#define LED_PIN              8        // onboard LED on most ESP32-C3 boards
+#define LED_ACTIVE_LOW       1        // SuperMini LED is wired to 3V3 (LOW = ON); set 0 if yours is LOW = OFF
+#define LOCK_PIN             4        // relay IN (low-level trigger module)
+#define LOCK_PULSE_MS        500      // relay ON time per unlock
+#define LOCK_PULSE_MAX_MS    1000     // solenoid must never be energised longer than this
 #define LOCK_COOLDOWN_MS     10000    // minimum gap between two unlocks
+
+_Static_assert(LOCK_PULSE_MS > 0 && LOCK_PULSE_MS <= LOCK_PULSE_MAX_MS,
+               "LOCK_PULSE_MS must be 1..1000 ms - longer pulses overheat the solenoid");
+_Static_assert(LOCK_PIN != 2 && LOCK_PIN != 8 && LOCK_PIN != 9,
+               "Do not put the relay on an ESP32-C3 strapping pin (2, 8, 9)");
 
 static const char *TAG = "LOCK";
 
 // ------------------------- GPIO helpers -------------------------
 static bool is_allowed_pin(int pin) { return pin == LED_PIN || pin == LOCK_PIN; }
-static bool is_active_low(int pin)  { return pin == LOCK_PIN; }   // relay: LOW = ON
+static bool is_active_low(int pin)
+{
+    if (pin == LOCK_PIN) return true;            // relay: LOW = ON
+    if (pin == LED_PIN)  return LED_ACTIVE_LOW;
+    return false;
+}
 
 // on = 1 means "switched ON", whatever the real pin level is
 static void set_output(int pin, int on)
@@ -96,7 +114,9 @@ static void lock_timer_cb(void *arg)
     set_output(LOCK_PIN, 0);
     lock_active = false;
     ESP_LOGI(TAG, "Unlock pulse finished");
-    send_text("OK 27:0");
+    char reply[16];
+    snprintf(reply, sizeof(reply), "OK %d:0", LOCK_PIN);
+    send_text(reply);
 }
 
 // ------------------------- Command handling -------------------------
@@ -153,8 +173,10 @@ static void handle_message(char *msg)
         lock_active = true;
         last_unlock_us = now;
         esp_timer_start_once(lock_timer, (uint64_t)LOCK_PULSE_MS * 1000);
-        ESP_LOGI(TAG, "Unlock pulse started");
-        send_text("OK 27:1");
+        ESP_LOGI(TAG, "Unlock pulse started (%d ms)", LOCK_PULSE_MS);
+        char reply[16];
+        snprintf(reply, sizeof(reply), "OK %d:1", LOCK_PIN);
+        send_text(reply);
     } else {
         set_output(pin, val);
         if (pin == LOCK_PIN) lock_active = false;
